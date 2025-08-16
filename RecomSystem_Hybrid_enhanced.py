@@ -1,20 +1,3 @@
-
-"""
-Swiggy-Ready Hybrid Restaurant Recommender (Flask API)
-
-Features:
-- Hybrid: Content-based (TF-IDF over cuisines + "KnownFor") + Collaborative (SVD with Surprise)
-- Optional Geo-filtering if restaurant lat/lng columns exist
-- Time-aware filtering using a simple "Timing" parser + explicit time_slot input
-- Service mode & veg filters
-- Budget filter
-- Evaluation endpoints with RMSE, Precision@K, Recall@K
-- Past orders endpoint
-- Ready to deploy as a Flask microservice
-
-Author: Ojas More (adapted with help from ChatGPT)
-"""
-
 import os
 import math
 from datetime import datetime
@@ -31,9 +14,8 @@ from sklearn.metrics.pairwise import cosine_similarity
 from surprise import Dataset, Reader, SVD, accuracy
 from surprise.model_selection import train_test_split as surprise_split
 
-# -----------------------------
 # Config
-# -----------------------------
+
 
 RESTAURANT_CSV = os.environ.get("RESTAURANT_CSV", "bangalore_dataset_with_coords.csv")
 USER_ORDERS_CSV = os.environ.get("USER_ORDERS_CSV", "UserOrdersData.csv")
@@ -42,9 +24,7 @@ TOPN_SHORTLIST = int(os.environ.get("TOPN_SHORTLIST", "200"))  # shortlist size 
 DEFAULT_KM_RADIUS = float(os.environ.get("DEFAULT_KM_RADIUS", "5"))
 DEFAULT_TOP_N = int(os.environ.get("DEFAULT_TOP_N", "10"))
 
-# -----------------------------
-# Load Data
-# -----------------------------
+
 
 restaurants = pd.read_csv(RESTAURANT_CSV)
 users = pd.read_csv(USER_ORDERS_CSV)
@@ -66,7 +46,7 @@ restaurants["CombinedFeatures"] = (
     restaurants.get("Cuisines", "").astype(str) + " " + restaurants.get("KnownFor", "").astype(str)
 )
 
-# Build TF-IDF and similarity
+# TF-IDF and similarity
 tfidf = TfidfVectorizer(stop_words="english")
 tfidf_matrix = tfidf.fit_transform(restaurants["CombinedFeatures"])
 content_sim = cosine_similarity(tfidf_matrix)
@@ -75,9 +55,9 @@ content_sim = cosine_similarity(tfidf_matrix)
 restid_to_index = {rid: i for i, rid in enumerate(restaurants["rest_id"].tolist())}
 index_to_restid = {i: rid for rid, i in restid_to_index.items()}
 
-# -----------------------------
+
 # Surprise SVD for Collaborative
-# -----------------------------
+
 
 # Ensure "rating" in users data; if not present, try to create a placeholder from any "rating" like column
 if "rating" not in users.columns:
@@ -94,9 +74,9 @@ svd.fit(trainset)
 test_predictions = svd.test(testset)
 rmse_value = accuracy.rmse(test_predictions, verbose=False)
 
-# -----------------------------
+
 # Utility: Haversine distance
-# -----------------------------
+
 
 def haversine_km(lat1, lon1, lat2, lon2):
     """Compute Haversine distance in KM between two (lat, lon)."""
@@ -108,9 +88,9 @@ def haversine_km(lat1, lon1, lat2, lon2):
     c = 2 * np.arcsin(np.sqrt(a))
     return R * c
 
-# -----------------------------
+
 # Time slot parsing
-# -----------------------------
+
 
 def infer_time_slot(dt: Optional[datetime] = None) -> str:
     """Return one of {'breakfast','lunch','dinner','late_night'} based on hour."""
@@ -139,9 +119,9 @@ def timing_supports_slot(timing_str: str, slot: str) -> bool:
     keys = slot_keywords.get(slot, [])
     return any(k in s for k in keys) or s == "unknown"
 
-# -----------------------------
+
 # Filtering helpers
-# -----------------------------
+
 
 def filter_by_budget(df: pd.DataFrame, budget_max: Optional[float]) -> pd.DataFrame:
     if budget_max is None:
@@ -174,7 +154,7 @@ def filter_by_veg(df: pd.DataFrame, veg_only: Optional[bool]) -> pd.DataFrame:
         if veg_only:
             return df[df[col].fillna(0).astype(int) == 1]
         else:
-            return df  # allow both
+            return df  
     return df
 
 def filter_by_time_slot(df: pd.DataFrame, slot: Optional[str]) -> pd.DataFrame:
@@ -195,9 +175,9 @@ def filter_by_geo(df: pd.DataFrame, user_lat: Optional[float], user_lng: Optiona
     df["distance_km"] = dists
     return df[df["distance_km"] <= (max_km or DEFAULT_KM_RADIUS)]
 
-# -----------------------------
+
 # Core recommender steps
-# -----------------------------
+
 
 def shortlist_by_content(seed_rest_id: str, top_n: int = TOPN_SHORTLIST) -> List[str]:
     """Return a shortlist of similar restaurants (rest_id) by content similarity to the seed rest_id."""
@@ -205,7 +185,7 @@ def shortlist_by_content(seed_rest_id: str, top_n: int = TOPN_SHORTLIST) -> List
         return []
     idx = restid_to_index[seed_rest_id]
     sims = content_sim[idx]
-    # argsort descending, skip self
+    
     similar_idx = np.argsort(-sims)
     similar_idx = [i for i in similar_idx if i != idx][:top_n]
     return [index_to_restid[i] for i in similar_idx]
@@ -218,7 +198,7 @@ def rank_for_user(user_id: str, rest_ids: List[str], top_n: int = DEFAULT_TOP_N)
             pred = svd.predict(str(user_id), str(rid))
             preds.append((rid, float(pred.est)))
         except Exception:
-            # In rare cases, Surprise can error on unseen ids; skip gracefully
+            
             continue
     preds.sort(key=lambda x: x[1], reverse=True)
     preds = preds[:top_n]
@@ -260,7 +240,7 @@ def hybrid_recommend(
 
     short_df = restaurants[restaurants["rest_id"].isin(shortlist_ids)].copy()
 
-    # Apply filters
+    #= filters
     short_df = filter_by_budget(short_df, budget_max)
     short_df = filter_by_service_mode(short_df, service_mode)
     short_df = filter_by_veg(short_df, veg_only)
@@ -271,13 +251,13 @@ def hybrid_recommend(
     if short_df.empty:
         return []
 
-    # Rank
+    
     ranked = rank_for_user(user_id, short_df["rest_id"].tolist(), top_n=top_n)
     return ranked
 
-# -----------------------------
+
 # Evaluation metrics (Top-N)
-# -----------------------------
+
 
 def build_topn_recommendations(model, trainset, n=5) -> Dict[str, List[str]]:
     """
@@ -304,15 +284,15 @@ def precision_recall_at_k(topn: Dict[str, List[str]], testset, k=5, threshold=3.
     Compute overall Precision@K and Recall@K using Surprise predictions testset.
     A "relevant" item is one with true rating >= threshold.
     """
-    # Build truth by user
+    
     truth = {}
     for uid, iid, true_r in testset:
         truth.setdefault(uid, set()).add((iid, true_r))
-    # Compute metrics
+    
     precisions = []
     recalls = []
     for uid, rec_items in topn.items():
-        # relevant items in test for uid
+       
         rel_items = {iid for (iid, r) in truth.get(uid, set()) if r >= threshold}
         if not rec_items:
             continue
@@ -326,16 +306,16 @@ def precision_recall_at_k(topn: Dict[str, List[str]], testset, k=5, threshold=3.
     recall = float(np.mean(recalls)) if recalls else 0.0
     return precision, recall
 
-# Precompute a light evaluation snapshot (can be disabled for very large data)
+
 try:
     topn5 = build_topn_recommendations(svd, trainset, n=5)
     p5, r5 = precision_recall_at_k(topn5, testset, k=5, threshold=3.5)
 except Exception:
     p5, r5 = 0.0, 0.0
 
-# -----------------------------
+
 # Flask App
-# -----------------------------
+
 
 app = Flask(__name__)
 
@@ -414,6 +394,7 @@ def metrics():
     })
 
 if __name__ == "__main__":
-    # Example: FLASK_ENV=development python swiggy_hybrid_recommender.py
+   
     port = int(os.environ.get("PORT", "8000"))
     app.run(host="0.0.0.0", port=port, debug=False)
+
